@@ -1,60 +1,285 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
-# Automatic setup Android Development Environment for Flutter (Arch Linux)
-# Tested on: Arch / Manjaro / EndeavourOS
-# ------------------------------------------------------------
+# Flutter Development Environment Setup Script
+#
+# This script automates the setup of a Flutter development environment on Linux.
+# It detects the Linux distribution, installs necessary dependencies,
+# installs Flutter SDK, and sets up Android development tools.
+#
+# Supported Distributions: Debian/Ubuntu, Arch Linux, Fedora/RHEL
+#
 
-echo "=== [1/6] Updating System ==="
-sudo pacman -Syu --noconfirm
+# -----------------------------------------------------------------------------
+# Script Configuration
+# -----------------------------------------------------------------------------
 
-echo "=== [2/6] Installing packages ==="
-sudo pacman -S --noconfirm \
-  git wget curl base-devel \
-  flutter \
-  jdk17-openjdk \
-  android-sdk android-sdk-platform-tools android-sdk-build-tools \
-  android-udev \
-  clang cmake ninja pkgconf gtk3 libsecret
+# Exit immediately if a command exits with a non-zero status.
+set -euo pipefail
 
-# Optional Waydroid (emulator)
-read -p "Install Waydroid (Android emulator)? (y/n): " install_waydroid
-if [[ "$install_waydroid" == "y" ]]; then
-  sudo pacman -S --noconfirm waydroid
-fi
+# -----------------------------------------------------------------------------
+# Global Variables
+# -----------------------------------------------------------------------------
 
-echo "=== [3/6] Configuring environment variables ==="
+readonly RED='[0;31m'
+readonly GREEN='[0;32m'
+readonly YELLOW='[1;33m'
+readonly NC='[0m' # No Color
 
-ANDROID_HOME="$HOME/Android/Sdk"
+# -----------------------------------------------------------------------------
+# Logging Functions
+# -----------------------------------------------------------------------------
 
-mkdir -p "$ANDROID_HOME"
+log_info() {
+  echo -e "${GREEN}[INFO]${NC} $*"
+}
 
-# Append env to .bashrc
-cat <<EOF >> ~/.bashrc
+log_warn() {
+  echo -e "${YELLOW}[WARN]${NC} $*"
+}
 
-# >>> ANDROID & FLUTTER ENV SETUP >>>
-export ANDROID_HOME=\$HOME/Android/Sdk
-export ANDROID_SDK_ROOT=\$ANDROID_HOME
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-export PATH=\$PATH:\$ANDROID_HOME/emulator:\$ANDROID_HOME/platform-tools
-export PATH=\$PATH:/opt/flutter/bin
-# <<< ANDROID & FLUTTER ENV SETUP <<<
-EOF
+log_error() {
+  echo -e "${RED}[ERROR]${NC} $*" >&2
+}
 
-source ~/.bashrc
+# -----------------------------------------------------------------------------
+# Cleanup Function
+# -----------------------------------------------------------------------------
 
-echo "=== [4/6] Setting permissions (adb udev rules) ==="
-sudo usermod -aG adbusers $USER
-sudo udevadm control --reload-rules
-sudo systemctl restart systemd-udevd
+cleanup() {
+  log_info "Cleaning up..."
+  # Add cleanup tasks here if needed
+}
 
-echo "=== [5/6] Installing Android Platforms via sdkmanager ==="
-yes | sdkmanager --sdk_root=$ANDROID_HOME "platform-tools"
-yes | sdkmanager --sdk_root=$ANDROID_HOME "build-tools;34.0.0"
-yes | sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-34"
-yes | sdkmanager --sdk_root=$ANDROID_HOME "cmdline-tools;latest"
+trap cleanup EXIT ERR
 
-echo "=== [6/6] Flutter Doctor ==="
-flutter doctor
+# -----------------------------------------------------------------------------
+# Main Function
+# -----------------------------------------------------------------------------
 
-echo "✅ DONE — Restart terminal untuk apply environment"
-echo "ℹ️  Cek instalasi dengan: flutter doctor -v"
+main() {
+  log_info "Starting Flutter development environment setup..."
+
+  # Detect Linux distribution
+  if [ -f /etc/os-release ]; then
+    # freedesktop.org and systemd
+    . /etc/os-release
+    OS=$NAME
+    VER=$VERSION_ID
+  elif type lsb_release >/dev/null 2>&1; then
+    # linuxbase.org
+    OS=$(lsb_release -si)
+    VER=$(lsb_release -sr)
+  elif [ -f /etc/lsb-release ]; then
+    # For some versions of Debian/Ubuntu without lsb_release command
+    . /etc/lsb-release
+    OS=$DISTRIB_ID
+    VER=$DISTRIB_RELEASE
+  elif [ -f /etc/debian_version ]; then
+    # Older Debian/Ubuntu/etc.
+    OS=Debian
+    VER=$(cat /etc/debian_version)
+  elif [ -f /etc/SuSe-release ]; then
+    # Older SuSE/etc.
+    ...
+  elif [ -f /etc/redhat-release ]; then
+    # Older Red Hat, CentOS, etc.
+    ...
+  else
+    # Fall back to uname, e.g. "Linux <version>", also works for BSD, etc.
+    OS=$(uname -s)
+    VER=$(uname -r)
+  fi
+
+  log_info "Detected OS: $OS $VER"
+
+  # Install dependencies based on the detected distribution
+  case "$OS" in
+    "Ubuntu" | "Debian")
+      install_dependencies_debian
+      ;;
+    "Arch Linux")
+      install_dependencies_arch
+      ;;
+    "Fedora")
+      install_dependencies_fedora
+      ;;
+    *)
+      log_error "Unsupported operating system: $OS"
+      exit 1
+      ;;
+  esac
+
+  # Install Flutter SDK
+  install_flutter
+
+  # Install Android SDK
+  install_android_sdk
+
+  # Install Waydroid
+  install_waydroid
+
+  # Set up environment variables
+  setup_environment
+
+  # Run flutter doctor
+  flutter doctor
+
+  log_info "Flutter development environment setup complete!"
+  log_info "Please restart your shell or run 'source ~/.bashrc' (or ~/.zshrc) to apply the changes."
+}
+
+# -----------------------------------------------------------------------------
+# Distribution-specific Dependency Installation
+# -----------------------------------------------------------------------------
+
+install_dependencies_debian() {
+  log_info "Installing dependencies for Debian/Ubuntu..."
+  sudo apt-get update
+  sudo apt-get install -y curl git unzip xz-utils zip libglu1-mesa lib32stdc++6 openjdk-11-jdk
+}
+
+install_dependencies_arch() {
+  log_info "Installing dependencies for Arch Linux..."
+  sudo pacman -Syu --noconfirm
+  sudo pacman -S --noconfirm curl git unzip xz zip libglu jdk11-openjdk
+}
+
+install_dependencies_fedora() {
+  log_info "Installing dependencies for Fedora..."
+  sudo dnf update
+  sudo dnf install -y curl git unzip xz-utils zip mesa-libGLU java-11-openjdk-devel
+}
+
+# -----------------------------------------------------------------------------
+# Flutter SDK Installation
+# -----------------------------------------------------------------------------
+
+install_flutter() {
+  log_info "Installing Flutter SDK..."
+  if [ -d "$HOME/flutter" ]; then
+    log_warn "Flutter SDK already exists. Skipping installation."
+    return
+  fi
+
+  git clone https://github.com/flutter/flutter.git -b stable $HOME/flutter
+
+  log_info "Flutter SDK installed successfully."
+}
+
+# -----------------------------------------------------------------------------
+# Android SDK Installation
+# -----------------------------------------------------------------------------
+
+install_android_sdk() {
+  log_info "Installing Android SDK..."
+
+  export ANDROID_HOME=$HOME/Android/Sdk
+  mkdir -p $ANDROID_HOME
+
+  # Get the latest command line tools URL
+  STUDIO_DOWNLOAD_PAGE="https://developer.android.com/studio"
+  LATEST_CMDLINE_TOOLS_URL=$(curl -s "$STUDIO_DOWNLOAD_PAGE" | grep -o "https:\/\/dl.google.com\/android\/repository\/commandlinetools\-linux\-[0-9]*_latest\.zip" | head -n 1)
+
+  if [ -z "$LATEST_CMDLINE_TOOLS_URL" ]; then
+    log_error "Failed to get the latest Android command line tools URL."
+    exit 1
+  fi
+
+  # Download and install Android command line tools
+  wget "$LATEST_CMDLINE_TOOLS_URL" -P /tmp
+  unzip /tmp/commandlinetools-linux-*_latest.zip -d /tmp
+  mkdir -p $ANDROID_HOME/cmdline-tools/latest
+  mv /tmp/cmdline-tools/* $ANDROID_HOME/cmdline-tools/latest/
+
+  # Accept licenses
+  yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+
+  # Install platform-tools, build-tools, and system images
+  $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
+
+  log_info "Android SDK installed successfully."
+}
+
+# -----------------------------------------------------------------------------
+# Waydroid Installation
+# -----------------------------------------------------------------------------
+
+install_waydroid() {
+    log_info "Installing Waydroid..."
+    case "$OS" in
+        "Ubuntu" | "Debian")
+            sudo apt install -y curl
+            curl -sS https://raw.githubusercontent.com/waydroid/waydroid/main/tools/install.sh | sudo bash
+            ;;
+        "Arch Linux")
+            yay -S waydroid
+            ;;
+        "Fedora")
+            sudo dnf install -y waydroid
+            ;;
+    esac
+    log_info "Waydroid installed successfully."
+}
+
+# -----------------------------------------------------------------------------
+# Environment Setup
+# -----------------------------------------------------------------------------
+
+detect_java_home() {
+    local detected_java_home=""
+
+    # 1. Check common installation paths
+    local common_paths=(
+        "/usr/lib/jvm/java-11-openjdk-amd64"
+        "/usr/lib/jvm/java-11-openjdk"
+        "/usr/lib/jvm/jdk-11"
+    )
+
+    for path in "${common_paths[@]}"; do
+        if [ -d "$path" ]; then
+            detected_java_home=$path
+            break
+        fi
+    done
+
+    if [ -z "$detected_java_home" ]; then
+        log_error "Failed to detect JAVA_HOME."
+        exit 1
+    fi
+
+    echo $detected_java_home
+}
+
+setup_environment() {
+  log_info "Setting up environment variables..."
+
+  # Detect shell
+  if [ -n "$ZSH_VERSION" ]; then
+    PROFILE_FILE="$HOME/.zshrc"
+  else
+    PROFILE_FILE="$HOME/.bashrc"
+  fi
+
+  # Set JAVA_HOME
+  JAVA_HOME=$(detect_java_home)
+
+  # Add environment variables to profile file
+  echo '' >> $PROFILE_FILE
+  echo '# Flutter and Android SDK' >> $PROFILE_FILE
+  echo "export FLUTTER_HOME=$HOME/flutter" >> $PROFILE_FILE
+  echo 'export PATH=$FLUTTER_HOME/bin:$PATH' >> $PROFILE_FILE
+  echo "export ANDROID_HOME=$HOME/Android/Sdk" >> $PROFILE_FILE
+  echo 'export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH' >> $PROFILE_FILE
+  echo 'export PATH=$ANDROID_HOME/platform-tools:$PATH' >> $PROFILE_FILE
+  echo "export JAVA_HOME=$JAVA_HOME" >> $PROFILE_FILE
+  echo 'export PATH=$JAVA_HOME/bin:$PATH' >> $PROFILE_FILE
+
+  log_info "Environment variables set in $PROFILE_FILE"
+}
+
+
+# -----------------------------------------------------------------------------
+# Script Execution
+# -----------------------------------------------------------------------------
+
+main

@@ -135,19 +135,40 @@ main() {
 install_dependencies_debian() {
   log_info "Installing dependencies for Debian/Ubuntu..."
   sudo apt-get update
-  sudo apt-get install -y curl git unzip xz-utils zip libglu1-mesa lib32stdc++6 openjdk-11-jdk
+  packages="curl git unzip xz-utils zip libglu1-mesa lib32stdc++6 openjdk-11-jdk"
+  for package in $packages; do
+    if dpkg -s $package >/dev/null 2>&1; then
+      log_warn "$package is already installed. Skipping."
+    else
+      sudo apt-get install -y $package
+    fi
+  done
 }
 
 install_dependencies_arch() {
   log_info "Installing dependencies for Arch Linux..."
   sudo pacman -Syu --noconfirm
-  sudo pacman -S --noconfirm curl git unzip xz zip libglu jdk11-openjdk
+  packages="curl git unzip xz zip libglu jdk11-openjdk"
+  for package in $packages; do
+    if pacman -Q $package >/dev/null 2>&1; then
+      log_warn "$package is already installed. Skipping."
+    else
+      sudo pacman -S --noconfirm $package
+    fi
+  done
 }
 
 install_dependencies_fedora() {
   log_info "Installing dependencies for Fedora..."
   sudo dnf update
-  sudo dnf install -y curl git unzip xz-utils zip mesa-libGLU java-11-openjdk-devel
+  packages="curl git unzip xz-utils zip mesa-libGLU java-11-openjdk-devel"
+  for package in $packages; do
+    if rpm -q $package >/dev/null 2>&1; then
+      log_warn "$package is already installed. Skipping."
+    else
+      sudo dnf install -y $package
+    fi
+  done
 }
 
 # -----------------------------------------------------------------------------
@@ -206,6 +227,11 @@ install_android_sdk() {
 
 install_waydroid() {
     log_info "Installing Waydroid..."
+    if command -v waydroid >/dev/null 2>&1; then
+        log_warn "Waydroid is already installed. Skipping."
+        return
+    fi
+
     case "$OS" in
         "Ubuntu" | "Debian")
             sudo apt install -y curl
